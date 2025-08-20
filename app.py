@@ -101,7 +101,9 @@ if st.sidebar.button("Generate Curve", type="primary"):
                 result_lines = ["X (Strain),Y (Stress)"]
                 for x, y in zip(new_data[0], new_data[1]):
                     result_lines.append(f"{x:.2f},{y:.3f}")
-                result_csv = "\\n".join(result_lines)
+                
+                # *** THIS IS THE CORRECTED LINE ***
+                result_csv = "\n".join(result_lines)
                 
                 st.text_area("Output Data", result_csv, height=300)
 
