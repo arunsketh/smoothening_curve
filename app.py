@@ -100,7 +100,7 @@ if st.sidebar.button("Generate Curve", type="primary"):
 if st.session_state.results_data is not None:
     with output_placeholder.container():
         generation_dt = datetime.fromtimestamp(st.session_state.generation_time)
-        st.success(f"✅ Success! Curve generated at {generation_dt.strftime('%H:%M:%S')}.")
+        st.success(f"✅ Success! Curve generated")
         
         col1, col2 = st.columns([1, 2])
 
@@ -134,3 +134,4 @@ if st.session_state.results_data is not None:
             ax.legend()
             ax.grid(True, linestyle='--', alpha=0.6)
             st.pyplot(fig)
+
