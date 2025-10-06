@@ -2,6 +2,8 @@ import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
 import io
+import time  # <-- ADDED: To get the current time
+from datetime import datetime  # <-- ADDED: To format the time for display
 
 # --- 1. Define Core Functions (This section is unchanged) ---
 
@@ -73,6 +75,7 @@ step_size = st.sidebar.number_input(
 if 'results_data' not in st.session_state:
     st.session_state.results_data = None
     st.session_state.original_data = None
+    st.session_state.generation_time = None # <-- ADDED: Initialize time
 
 # --- 4. Handle Button Click to Run Calculation and Save State ---
 if st.sidebar.button("Generate Curve", type="primary"):
@@ -88,11 +91,19 @@ if st.sidebar.button("Generate Curve", type="primary"):
             # On success, save the data to the session state
             st.session_state.original_data = original_data
             st.session_state.results_data = new_data
+            # --- THIS IS THE ADDED PART ---
+            # It saves the exact time of generation to prove it's new.
+            st.session_state.generation_time = time.time()
+            # -----------------------------
 
 # --- 5. Display the Output if it Exists in Session State ---
 # This block will run on EVERY page rerun, ensuring the output stays visible.
 if st.session_state.results_data is not None:
-    st.success("✅ Success! Interpolation complete.")
+    # --- THIS PART IS ADJUSTED TO SHOW THE TIMESTAMP ---
+    generation_dt = datetime.fromtimestamp(st.session_state.generation_time)
+    st.success(f"✅ Success! Curve generated at {generation_dt.strftime('%H:%M:%S')}.")
+    # ----------------------------------------------------
+    
     col1, col2 = st.columns([1, 2])
 
     # Retrieve data from session state for display
@@ -109,10 +120,10 @@ if st.session_state.results_data is not None:
         st.text_area("Output Data", result_csv, height=300, key="output_text_area")
 
         st.download_button(
-           label="Download data as CSV",
-           data=result_csv,
-           file_name='interpolated_data.csv',
-           mime='text/csv',
+            label="Download data as CSV",
+            data=result_csv,
+            file_name='interpolated_data.csv',
+            mime='text/csv',
         )
 
     with col2:
