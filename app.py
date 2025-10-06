@@ -1,17 +1,20 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
-import io
 import time
 from datetime import datetime
 
-# --- 1. Define Core Functions (unchanged logic) ---
+# --- 1. Define Core Functions ---
 
 def get_interpolated_data(data_str, step_size):
     """
-    Reads data from a string, performs interpolation, and returns the results.
+    Reads data from a string, performs interpolation, and returns:
+      - original_data: (original_x_sorted_by_y, original_y_sorted_by_y)
+      - new_data: (new_x_values_with_endpoints, new_y_values_with_endpoints)
+      - error: None or message
+    Also ensures the first and last input points are retained in the output.
     """
-    # Convert input string to a list of (x, y) tuples
+    # Parse input into list of (x, y) in original order
     data_lines = data_str.strip().splitlines()
     data = []
     for i, line in enumerate(data_lines):
@@ -19,7 +22,6 @@ def get_interpolated_data(data_str, step_size):
         if not line:
             continue
         try:
-            # Flexible parsing for comma or space separated values
             cleaned_line = "".join(
                 c for c in line if c.isdigit() or c == "." or c == "," or c.isspace()
             )
@@ -39,17 +41,48 @@ def get_interpolated_data(data_str, step_size):
         st.error("⚠️ Input Error: At least two data points are needed for interpolation.")
         return None, None, None
 
-    # IMPORTANT: Sort data based on y-values for correct interpolation
-    data.sort(key=lambda item: item[1])
-    original_x = np.array([item[0] for item in data])
-    original_y = np.array([item[1] for item in data])
+    # Retain the first and last points from the original input order
+    first_raw = data[0]
+    last_raw = data[-1]
 
-    # Define the range for new y values
+    # Sort by Y for monotonic interpolation
+    data_sorted = sorted(data, key=lambda item: item[1])
+    original_x = np.array([item[0] for item in data_sorted])
+    original_y = np.array([item[1] for item in data_sorted])
+
+    # Define Y grid over [min_y, max_y] with step_size
     min_y, max_y = original_y[0], original_y[-1]
-    new_y_values = np.arange(min_y, max_y + step_size * 1e-9, step_size)
 
-    # Compute corresponding x values using numpy's interpolation
+    # Construct a step-based sequence that stays <= max_y, then explicitly add max_y if missing
+    n_steps = int(np.floor((max_y - min_y) / step_size + 1e-12)) + 1
+    base_y = min_y + step_size * np.arange(n_steps)
+
+    # If max_y is not included due to rounding, append it to ensure the upper endpoint is present
+    if not np.isclose(base_y[-1], max_y, rtol=0, atol=max(1e-12, step_size * 1e-9)):
+        new_y_values = np.append(base_y, max_y)
+    else:
+        new_y_values = base_y
+
+    # Interpolate X at the chosen Y grid
     new_x_values = np.interp(new_y_values, original_y, original_x)
+
+    # Helper to append a point if its Y isn't already present (within tolerance)
+    def append_point(xarr, yarr, xval, yval, tol):
+        if not np.any(np.isclose(yarr, yval, rtol=0, atol=tol)):
+            xarr = np.append(xarr, xval)
+            yarr = np.append(yarr, yval)
+        return xarr, yarr
+
+    tol = max(1e-12, step_size * 1e-6)
+
+    # Ensure the first and last input points are included exactly
+    new_x_values, new_y_values = append_point(new_x_values, new_y_values, first_raw[0], first_raw[1], tol)
+    new_x_values, new_y_values = append_point(new_x_values, new_y_values, last_raw[0], last_raw[1], tol)
+
+    # Sort the combined set by Y to keep monotonic order
+    order = np.argsort(new_y_values)
+    new_y_values = new_y_values[order]
+    new_x_values = new_x_values[order]
 
     return (original_x, original_y), (new_x_values, new_y_values), None
 
@@ -59,7 +92,6 @@ def get_interpolated_data(data_str, step_size):
 st.set_page_config(layout="wide")
 st.title("📈 Curve Optimisation GUI")
 
-# Use a sidebar for inputs to keep the main area clean
 st.sidebar.header("Controls")
 
 default_data = (
@@ -67,25 +99,30 @@ default_data = (
 )
 
 data_str = st.sidebar.text_area(
-    "Input Data (X, Y per line)", value=default_data, height=250,
+    "Input Data (X, Y per line)",
+    value=default_data,
+    height=250,
     help="Paste data here. Values can be separated by commas or spaces."
 )
 
 step_size = st.sidebar.number_input(
-    "Step Size for Y-axis (Stress)", min_value=0.0001, value=0.005, step=0.001, format="%.4f"
+    "Step Size for Y-axis (Stress)",
+    min_value=0.0001,
+    value=0.005,
+    step=0.001,
+    format="%.4f"
 )
 
-# --- Single placeholder for all the output ---
+# Single placeholder for all output
 output_placeholder = st.empty()
 
 # --- 3. Initialize Session State ---
-if 'results_data' not in st.session_state:
+if "results_data" not in st.session_state:
     st.session_state.results_data = None
     st.session_state.original_data = None
     st.session_state.generation_time = None
 
-# Track whether the latest run was triggered by Generate
-if 'just_generated' not in st.session_state:
+if "just_generated" not in st.session_state:
     st.session_state.just_generated = False
 
 # --- 4. Handle Button Click to Run Calculation and Save State ---
@@ -105,7 +142,7 @@ if st.sidebar.button("Generate Curve", type="primary"):
             st.session_state.original_data = original_data
             st.session_state.results_data = new_data
             st.session_state.generation_time = time.time()
-            st.session_state.just_generated = True  # mark that we should update the text area
+            st.session_state.just_generated = True  # update text area on this rerun
 
 # --- 5. Display the Output inside the placeholder if it Exists ---
 if st.session_state.results_data is not None:
@@ -120,13 +157,13 @@ if st.session_state.results_data is not None:
 
         with col1:
             st.subheader("Interpolated Results")
+            # Prepare CSV including retained endpoints
             result_lines = ["X (Strain),Y (Stress)"]
             for x, y in zip(new_data[0], new_data[1]):
                 result_lines.append(f"{x:.2f},{y:.3f}")
             result_csv = "\n".join(result_lines)
 
-            # Option B: Keep the key, explicitly overwrite session_state before rendering
-            # Only overwrite right after a successful Generate click, so manual edits aren't clobbered later
+            # Option B: overwrite widget state only right after generation
             if st.session_state.just_generated or "output_text_area" not in st.session_state:
                 st.session_state["output_text_area"] = result_csv
 
@@ -140,14 +177,16 @@ if st.session_state.results_data is not None:
             st.download_button(
                 label="Download data as CSV",
                 data=st.session_state["output_text_area"],
-                file_name='interpolated_data.csv',
-                mime='text/csv',
+                file_name="interpolated_data.csv",
+                mime="text/csv",
             )
 
         with col2:
             st.subheader("Plot")
             fig, ax = plt.subplots(figsize=(8, 6))
+            # Input data (sorted by Y for visualization parity with interpolation)
             ax.plot(original_data[1], original_data[0], 'r-', marker='.', markersize=8, label='Input Data')
+            # Interpolated data with endpoints retained
             ax.plot(new_data[1], new_data[0], 'bo', markersize=4, label='Interpolated Data')
             ax.set_xlabel('Y values (Stress)')
             ax.set_ylabel('X values (Strain)')
@@ -156,5 +195,5 @@ if st.session_state.results_data is not None:
             ax.grid(True, linestyle='--', alpha=0.6)
             st.pyplot(fig)
 
-        # Reset the flag so future reruns won't overwrite manual edits
+        # Reset the flag so manual edits are preserved on later reruns
         st.session_state.just_generated = False
