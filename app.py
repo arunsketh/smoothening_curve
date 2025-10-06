@@ -1,18 +1,15 @@
 import streamlit as st
 import matplotlib.pyplot as plt
 import numpy as np
+import io
 
-# --- 1. Define Core Calculation Function (Refactored for purity) ---
+# --- 1. Define Core Functions (This section is unchanged) ---
 
-def process_data(data_str, step_size):
+def get_interpolated_data(data_str, step_size):
     """
     Reads data from a string, performs interpolation, and returns the results.
-    This function is "pure" and does not interact with the Streamlit UI directly.
-
-    Returns:
-        - A tuple of (original_data, new_data, None) on success.
-        - A tuple of (None, None, error_message_string) on failure.
     """
+    # Convert input string to a list of (x, y) tuples
     data_lines = data_str.strip().splitlines()
     data = []
     for i, line in enumerate(data_lines):
@@ -20,46 +17,34 @@ def process_data(data_str, step_size):
         if not line: continue
         try:
             # Flexible parsing for comma or space separated values
-            cleaned_line = "".join(c for c in line if c.isdigit() or c == '.' or c == ',' or c.isspace() or c == '-')
+            cleaned_line = "".join(c for c in line if c.isdigit() or c == '.' or c == ',' or c.isspace())
             parts = cleaned_line.replace(',', ' ').split()
             if len(parts) != 2:
-                return None, None, f"⚠️ Input Error: Line {i+1} ('{line}') must contain exactly two numbers."
+                st.error(f"⚠️ Input Error: Line {i+1} must contain exactly two numbers.")
+                return None, None, None
             x, y = map(float, parts)
             data.append((x, y))
         except ValueError:
-            return None, None, f"⚠️ Input Error: Could not convert values on line {i+1} ('{line}'). Please check the format."
+            st.error(f"⚠️ Input Error: Could not convert values on line {i+1}. Please check your format.")
+            return None, None, None
 
     if len(data) < 2:
-        return None, None, "⚠️ Input Error: At least two data points are needed for interpolation."
+        st.error("⚠️ Input Error: At least two data points are needed for interpolation.")
+        return None, None, None
 
-    # Sort data based on x-values for correct interpolation
-    data.sort(key=lambda item: item[0])
+    # IMPORTANT: Sort data based on y-values for correct interpolation
+    data.sort(key=lambda item: item[1])
     original_x = np.array([item[0] for item in data])
     original_y = np.array([item[1] for item in data])
 
-    # Verify that x-values are monotonically increasing, as required by np.interp
-    if not np.all(np.diff(original_x) >= 0):
-        return None, None, "⚠️ Interpolation Error: X-values must be unique and in increasing order for interpolation to work correctly. Please check for duplicate or out-of-order X-values."
+    # Define the range for new y values
+    min_y, max_y = original_y[0], original_y[-1]
+    new_y_values = np.arange(min_y, max_y + step_size * 1e-9, step_size)
 
-    # Define the range for new x values
-    min_x, max_x = original_x[0], original_x[-1]
-    
-    # Ensure step_size is positive to avoid errors
-    if step_size <= 0:
-        return None, None, "⚠️ Input Error: Step Size must be a positive number."
-        
-    new_x_values = np.arange(min_x, max_x, step_size)
-    # Manually add the final data point to ensure the curve extends to the end
-    if not np.isclose(new_x_values[-1], max_x):
-        new_x_values = np.append(new_x_values, max_x)
+    # Compute corresponding x values using numpy's interpolation
+    new_x_values = np.interp(new_y_values, original_y, original_x)
 
-    # Compute corresponding y values using numpy's interpolation
-    new_y_values = np.interp(new_x_values, original_x, original_y)
-
-    original_data = (original_x, original_y)
-    new_data = (new_x_values, new_y_values)
-
-    return original_data, new_data, None
+    return (original_x, original_y), (new_x_values, new_y_values), None
 
 
 # --- 2. Build the Streamlit User Interface ---
@@ -80,10 +65,11 @@ data_str = st.sidebar.text_area(
 )
 
 step_size = st.sidebar.number_input(
-    "Step Size for X-axis (Strain)", min_value=0.0001, value=10.0, step=1.0, format="%.4f"
+    "Step Size for Y-axis (Stress)", min_value=0.0001, value=0.005, step=0.001, format="%.4f"
 )
 
 # --- 3. Initialize Session State ---
+# This runs once per session to make sure our variables exist.
 if 'results_data' not in st.session_state:
     st.session_state.results_data = None
     st.session_state.original_data = None
@@ -94,24 +80,22 @@ if st.sidebar.button("Generate Curve", type="primary"):
         st.warning("Please provide input data.")
         st.session_state.results_data = None # Clear previous results
     else:
-        # Call the refactored, pure calculation function
-        original_data, new_data, error_message = process_data(data_str, step_size)
-        
-        if error_message:
-            st.error(error_message)
+        original_data, new_data, error = get_interpolated_data(data_str, step_size)
+        if error:
+            st.error(error)
             st.session_state.results_data = None # Clear previous results on error
         else:
-            # On success, save the data to the session state. This is the new result.
+            # On success, save the data to the session state
             st.session_state.original_data = original_data
             st.session_state.results_data = new_data
 
 # --- 5. Display the Output if it Exists in Session State ---
-# This block runs on every page rerun, showing the latest results.
+# This block will run on EVERY page rerun, ensuring the output stays visible.
 if st.session_state.results_data is not None:
     st.success("✅ Success! Interpolation complete.")
     col1, col2 = st.columns([1, 2])
 
-    # Retrieve the latest data from session state for display
+    # Retrieve data from session state for display
     original_data = st.session_state.original_data
     new_data = st.session_state.results_data
 
@@ -119,11 +103,10 @@ if st.session_state.results_data is not None:
         st.subheader("Interpolated Results")
         result_lines = ["X (Strain),Y (Stress)"]
         for x, y in zip(new_data[0], new_data[1]):
-            result_lines.append(f"{x:.4f},{y:.4f}")
+            result_lines.append(f"{x:.2f},{y:.3f}")
         result_csv = "\n".join(result_lines)
         
-        # This text_area is now stateless; its content is redrawn from result_csv on each run
-        st.text_area("Output Data", result_csv, height=300)
+        st.text_area("Output Data", result_csv, height=300, key="output_text_area")
 
         st.download_button(
            label="Download data as CSV",
@@ -135,14 +118,11 @@ if st.session_state.results_data is not None:
     with col2:
         st.subheader("Plot")
         fig, ax = plt.subplots(figsize=(8, 6))
-        ax.plot(original_data[0], original_data[1], 'r-', marker='.', markersize=8, label='Input Data')
-        ax.plot(new_data[0], new_data[1], 'bo', markersize=4, label='Interpolated Data')
-        ax.set_xlabel('X values (Strain)')
-        ax.set_ylabel('Y values (Stress)')
+        ax.plot(original_data[1], original_data[0], 'r-', marker='.', markersize=8, label='Input Data')
+        ax.plot(new_data[1], new_data[0], 'bo', markersize=4, label='Interpolated Data')
+        ax.set_xlabel('Y values (Stress)')
+        ax.set_ylabel('X values (Strain)')
         ax.set_title('Input and Interpolated Data')
         ax.legend()
         ax.grid(True, linestyle='--', alpha=0.6)
         st.pyplot(fig)
-else:
-    st.info("⬅️ Adjust the settings in the sidebar and click 'Generate Curve' to view the results.")
-
