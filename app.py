@@ -5,7 +5,7 @@ import io
 import time
 from datetime import datetime
 
-# --- 1. Define Core Functions (This section is unchanged) ---
+# --- 1. Define Core Functions (unchanged logic) ---
 
 def get_interpolated_data(data_str, step_size):
     """
@@ -16,18 +16,23 @@ def get_interpolated_data(data_str, step_size):
     data = []
     for i, line in enumerate(data_lines):
         line = line.strip()
-        if not line: continue
+        if not line:
+            continue
         try:
             # Flexible parsing for comma or space separated values
-            cleaned_line = "".join(c for c in line if c.isdigit() or c == '.' or c == ',' or c.isspace())
-            parts = cleaned_line.replace(',', ' ').split()
+            cleaned_line = "".join(
+                c for c in line if c.isdigit() or c == "." or c == "," or c.isspace()
+            )
+            parts = cleaned_line.replace(",", " ").split()
             if len(parts) != 2:
                 st.error(f"⚠️ Input Error: Line {i+1} must contain exactly two numbers.")
                 return None, None, None
             x, y = map(float, parts)
             data.append((x, y))
         except ValueError:
-            st.error(f"⚠️ Input Error: Could not convert values on line {i+1}. Please check your format.")
+            st.error(
+                f"⚠️ Input Error: Could not convert values on line {i+1}. Please check your format."
+            )
             return None, None, None
 
     if len(data) < 2:
@@ -63,14 +68,14 @@ default_data = (
 
 data_str = st.sidebar.text_area(
     "Input Data (X, Y per line)", value=default_data, height=250,
-    help="Paste your data here. Values can be separated by commas or spaces."
+    help="Paste data here. Values can be separated by commas or spaces."
 )
 
 step_size = st.sidebar.number_input(
     "Step Size for Y-axis (Stress)", min_value=0.0001, value=0.005, step=0.001, format="%.4f"
 )
 
-# --- NEW: Create a single placeholder for all the output --- # <-- CHANGE 1
+# --- Single placeholder for all the output ---
 output_placeholder = st.empty()
 
 # --- 3. Initialize Session State ---
@@ -79,29 +84,35 @@ if 'results_data' not in st.session_state:
     st.session_state.original_data = None
     st.session_state.generation_time = None
 
+# Track whether the latest run was triggered by Generate
+if 'just_generated' not in st.session_state:
+    st.session_state.just_generated = False
+
 # --- 4. Handle Button Click to Run Calculation and Save State ---
 if st.sidebar.button("Generate Curve", type="primary"):
-    output_placeholder.empty() # <-- CHANGE 2: Clear the placeholder on click
-    
+    output_placeholder.empty()
     if not data_str.strip():
         st.warning("Please provide input data.")
         st.session_state.results_data = None
+        st.session_state.just_generated = False
     else:
         original_data, new_data, error = get_interpolated_data(data_str, step_size)
         if error:
             st.error(error)
             st.session_state.results_data = None
+            st.session_state.just_generated = False
         else:
             st.session_state.original_data = original_data
             st.session_state.results_data = new_data
             st.session_state.generation_time = time.time()
+            st.session_state.just_generated = True  # mark that we should update the text area
 
-# --- 5. Display the Output inside the placeholder if it Exists --- # <-- CHANGE 3
+# --- 5. Display the Output inside the placeholder if it Exists ---
 if st.session_state.results_data is not None:
     with output_placeholder.container():
         generation_dt = datetime.fromtimestamp(st.session_state.generation_time)
-        st.success(f"✅ Success! Curve generated")
-        
+        st.success(f"✅ Success! Curve generated at {generation_dt.strftime('%H:%M:%S')}.")
+
         col1, col2 = st.columns([1, 2])
 
         original_data = st.session_state.original_data
@@ -113,12 +124,22 @@ if st.session_state.results_data is not None:
             for x, y in zip(new_data[0], new_data[1]):
                 result_lines.append(f"{x:.2f},{y:.3f}")
             result_csv = "\n".join(result_lines)
-            
-            st.text_area("Output Data", result_csv, height=300, key="output_text_area")
+
+            # Option B: Keep the key, explicitly overwrite session_state before rendering
+            # Only overwrite right after a successful Generate click, so manual edits aren't clobbered later
+            if st.session_state.just_generated or "output_text_area" not in st.session_state:
+                st.session_state["output_text_area"] = result_csv
+
+            st.text_area(
+                "Output Data",
+                st.session_state["output_text_area"],
+                height=300,
+                key="output_text_area",
+            )
 
             st.download_button(
                 label="Download data as CSV",
-                data=result_csv,
+                data=st.session_state["output_text_area"],
                 file_name='interpolated_data.csv',
                 mime='text/csv',
             )
@@ -135,3 +156,5 @@ if st.session_state.results_data is not None:
             ax.grid(True, linestyle='--', alpha=0.6)
             st.pyplot(fig)
 
+        # Reset the flag so future reruns won't overwrite manual edits
+        st.session_state.just_generated = False
